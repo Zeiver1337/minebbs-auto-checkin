@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MineBBS 静默自动签到（新版首页组件）
 // @namespace    https://www.minebbs.com/
-// @version      2.1.5
+// @version      2.1.6
 // @description  打开浏览器自动检查 MineBBS 签到时间，需要时静默签到；未登录弹窗可选去登录或跳过，登录成功后自动补签并询问是否关闭网页
 // @author       you
 // @homepageURL  https://github.com/Zeiver1337/minebbs-auto-checkin

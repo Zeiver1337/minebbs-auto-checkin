@@ -1,6 +1,6 @@
 # MineBBS Auto Check-in
 
-MineBBS 新版首页自动签到油猴脚本（v2.1.5）。
+MineBBS 新版首页自动签到油猴脚本（v2.1.6）。
 
 ## 功能
 
