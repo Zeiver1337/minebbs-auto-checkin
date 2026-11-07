@@ -1,6 +1,6 @@
 # MineBBS Auto Check-in
 
-MineBBS 新版首页自动签到油猴脚本（v2.1.3）。
+MineBBS 新版首页自动签到油猴脚本（v2.1.4）。
 
 ## 功能
 
@@ -15,8 +15,23 @@ MineBBS 新版首页自动签到油猴脚本（v2.1.3）。
 ## 安装
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 或兼容的油猴管理器
-2. 新建脚本，将 `minebbs-auto-sign.user.js` 的内容粘贴进去并保存
-3. 建议把浏览器启动页设为普通网页（推荐 `https://www.minebbs.com/`），油猴脚本无法注入 `chrome://newtab` 等浏览器内置页
+2. 点击下面的 GitHub Raw 安装链接：
+
+   **<https://raw.githubusercontent.com/Zeiver1337/minebbs-auto-checkin/main/minebbs-auto-sign.user.js>**
+
+3. 在油猴的安装页面确认安装
+4. 建议把浏览器启动页设为普通网页（推荐 `https://www.minebbs.com/`），油猴脚本无法注入 `chrome://newtab` 等浏览器内置页
+
+> 请通过上面的 Raw 链接安装，不要复制粘贴代码。通过链接安装的脚本会记录更新地址，油猴可以定期检查新版本；复制粘贴安装的脚本无法自动检查更新，只能手动重装。
+
+## 更新
+
+- 脚本头部已声明 `@updateURL` 和 `@downloadURL`，指向 GitHub `main` 分支的 raw 文件
+- 发布新版本时只需提高 `@version` 并推送到 GitHub，油猴会定期检查并在有新版本时提示更新
+- 也可以在油猴管理面板中手动点击「检查更新」
+- Greasy Fork 安装的用户：Greasy Fork 会从 GitHub 同步新版本，并按其自身机制提示更新
+
+Greasy Fork 发布页：<https://greasyfork.org/zh-CN/scripts/604253>
 
 ## 使用说明
 
