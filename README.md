@@ -1,6 +1,6 @@
 # MineBBS Auto Check-in
 
-MineBBS 新版首页自动签到油猴脚本（v2.1.2）。
+MineBBS 新版首页自动签到油猴脚本（v2.1.3）。
 
 ## 功能
 
@@ -27,6 +27,12 @@ MineBBS 新版首页自动签到油猴脚本（v2.1.2）。
 ## 文件
 
 - `minebbs-auto-sign.user.js`：主脚本
+
+## 支持作者
+
+GitHub 仓库：<https://github.com/Zeiver1337/minebbs-auto-checkin>
+
+欢迎来 GitHub 上支持我（Star、Issue、PR 都欢迎）。
 
 ## 说明
 
