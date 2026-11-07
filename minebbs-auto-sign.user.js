@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         MineBBS 静默自动签到（新版首页组件）
 // @namespace    https://www.minebbs.com/
-// @version      2.1.4
+// @version      2.1.5
 // @description  打开浏览器自动检查 MineBBS 签到时间，需要时静默签到；未登录弹窗可选去登录或跳过，登录成功后自动补签并询问是否关闭网页
 // @author       you
 // @homepageURL  https://github.com/Zeiver1337/minebbs-auto-checkin
@@ -90,6 +90,7 @@
         LOGIN_STATE: 'mb_loginState', // 上次检测到的登录状态
         LOGIN_PENDING: 'mb_loginPending', // 等待用户登录的时间戳
         LAST_SKIP: 'mb_lastSkipTime', // 用户在未登录弹窗选择「否」的时间戳
+        CLOSE_BEHAVIOR: 'mb_closeBehavior', // 补签完成后：ask / close / stay
         LOG: 'mb_log', // 日志
     };
 
@@ -531,9 +532,35 @@
             alert(
                 '上次签到：' + fmtTime(last) + '\n' +
                 (last ? '距今 ' + ((Date.now() - last) / 3600000).toFixed(1) + ' 小时' : '（无记录）') + '\n' +
-                '上次状态：' + status + '\n\n' +
+                '上次状态：' + status + '\n' +
+                '补签完成后：' + behaviorName(getCloseBehavior()) + '\n\n' +
                 '最近日志：\n' + (Array.isArray(logs) ? logs.slice(-10).join('\n') : '无')
             );
+        });
+
+        G.menu('偏好设置：补签完成后', () => {
+            const cur = getCloseBehavior();
+            const input = prompt(
+                '补签完成后的行为：\n' +
+                '1 = 每次都询问\n' +
+                '2 = 直接关闭网页\n' +
+                '3 = 留在当前网页\n\n' +
+                '当前：' + behaviorName(cur) + '\n' +
+                '请输入 1、2 或 3：',
+                cur === CLOSE_BEHAVIOR.CLOSE ? '2' : cur === CLOSE_BEHAVIOR.STAY ? '3' : '1'
+            );
+            if (input === null) return;
+            const next = {
+                '1': CLOSE_BEHAVIOR.ASK,
+                '2': CLOSE_BEHAVIOR.CLOSE,
+                '3': CLOSE_BEHAVIOR.STAY,
+            }[String(input).trim()];
+            if (!next) {
+                alert('输入无效，未修改偏好');
+                return;
+            }
+            setCloseBehavior(next);
+            alert('已设置：' + behaviorName(next));
         });
 
         G.menu('立即后台签到', () => {
@@ -771,23 +798,81 @@
         return null;
     }
 
-    // ============ 补签完成：回首页 + 是否关闭询问 ============
+    // ============ 补签完成：回首页 + 关闭/停留偏好 ============
+    const CLOSE_BEHAVIOR = { ASK: 'ask', CLOSE: 'close', STAY: 'stay' };
+
+    function getCloseBehavior() {
+        const v = G.get(K.CLOSE_BEHAVIOR, CLOSE_BEHAVIOR.ASK);
+        return (v === CLOSE_BEHAVIOR.CLOSE || v === CLOSE_BEHAVIOR.STAY) ? v : CLOSE_BEHAVIOR.ASK;
+    }
+
+    function behaviorName(v) {
+        if (v === CLOSE_BEHAVIOR.CLOSE) return '直接关闭网页';
+        if (v === CLOSE_BEHAVIOR.STAY) return '留在当前网页';
+        return '每次都询问';
+    }
+
+    function setCloseBehavior(v) {
+        G.set(K.CLOSE_BEHAVIOR, v);
+        log('补签完成后的行为偏好：' + behaviorName(v));
+    }
+
+    function markInteractiveDone() {
+        sessionSet(S.PROMPTED, String(Date.now()));
+        sessionRemove(S.LOGIN_FLOW);
+        try { history.replaceState(null, '', '/'); } catch (e) { /* ignore */ }
+    }
+
+    // 尝试关闭当前标签；被浏览器阻止时给出提示
+    function closeOrTip() {
+        try { window.close(); } catch (e) { /* ignore */ }
+        setTimeout(() => {
+            try {
+                if (!document.body) return;
+                const tip = document.createElement('div');
+                tip.textContent = '浏览器未允许自动关闭，请手动关闭此标签页。';
+                tip.style.cssText = [
+                    'position:fixed', 'left:50%', 'bottom:32px', 'transform:translateX(-50%)',
+                    'z-index:2147483647', 'background:#111827', 'color:#fff',
+                    'padding:10px 16px', 'border-radius:8px', 'font-size:13px',
+                    'box-shadow:0 8px 24px rgba(0,0,0,.3)',
+                    'font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif',
+                ].join(';');
+                document.body.appendChild(tip);
+                setTimeout(() => { try { tip.remove(); } catch (e) { /* ignore */ } }, 4000);
+            } catch (e) { /* ignore */ }
+        }, 500);
+    }
+
     function isPromptSuppressed() {
         const t = num(sessionGet(S.PROMPTED));
         return t > 0 && Date.now() - t < CFG.CLOSE_PROMPT_SUPPRESS_MS;
     }
 
     function finishInteractive() {
-        // 不在首页就先回首页，回到首页后再询问
+        // 不在首页就先回首页，回到首页后再按偏好处理
         if (location.pathname !== '/') {
             location.replace(CFG.SIGN_URL + '#mb_login_flow=1');
             return;
         }
-        const show = () => showClosePrompt();
+        const run = () => {
+            const behavior = getCloseBehavior();
+            if (behavior === CLOSE_BEHAVIOR.CLOSE) {
+                markInteractiveDone();
+                closeOrTip();
+                return;
+            }
+            if (behavior === CLOSE_BEHAVIOR.STAY) {
+                markInteractiveDone();
+                log('按偏好留在当前网页');
+                return;
+            }
+            showClosePrompt();
+        };
         if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', show, { once: true });
+            document.addEventListener('DOMContentLoaded', run, { once: true });
         } else {
-            show();
+            run();
         }
     }
 
@@ -844,36 +929,33 @@
             'font-weight:600', 'cursor:pointer',
         ].join(';');
 
-        const dismiss = () => {
-            sessionSet(S.PROMPTED, String(Date.now()));
-            sessionRemove(S.LOGIN_FLOW);
-            try { history.replaceState(null, '', '/'); } catch (e) { /* ignore */ }
-        };
+        const rememberRow = document.createElement('label');
+        rememberRow.style.cssText = 'display:flex;align-items:center;gap:6px;justify-content:center;margin-top:14px;font-size:12px;color:#6b7280;cursor:pointer;';
+
+        const remember = document.createElement('input');
+        remember.type = 'checkbox';
+        remember.style.cssText = 'width:14px;height:14px;cursor:pointer;';
+
+        const rememberText = document.createElement('span');
+        rememberText.textContent = '记住本次选择，下次不再询问';
+
+        rememberRow.appendChild(remember);
+        rememberRow.appendChild(rememberText);
+
+        const rememberHint = document.createElement('div');
+        rememberHint.textContent = '不勾选则每次都询问';
+        rememberHint.style.cssText = 'font-size:11px;color:#9ca3af;margin-top:6px;';
 
         btnYes.addEventListener('click', () => {
-            dismiss();
+            setCloseBehavior(remember.checked ? CLOSE_BEHAVIOR.CLOSE : CLOSE_BEHAVIOR.ASK);
+            markInteractiveDone();
             overlay.remove();
-            try { window.close(); } catch (e) { /* ignore */ }
-            // 脚本打开的标签可以关闭；若被浏览器阻止，给出手动关闭提示
-            setTimeout(() => {
-                try {
-                    if (!document.body) return;
-                    const tip = document.createElement('div');
-                    tip.textContent = '浏览器未允许自动关闭，请手动关闭此标签页。';
-                    tip.style.cssText = [
-                        'position:fixed', 'left:50%', 'bottom:32px', 'transform:translateX(-50%)',
-                        'z-index:2147483647', 'background:#111827', 'color:#fff',
-                        'padding:10px 16px', 'border-radius:8px', 'font-size:13px',
-                        'box-shadow:0 8px 24px rgba(0,0,0,.3)', 'font-family:' + font,
-                    ].join(';');
-                    document.body.appendChild(tip);
-                    setTimeout(() => { try { tip.remove(); } catch (e) { /* ignore */ } }, 4000);
-                } catch (e) { /* ignore */ }
-            }, 500);
+            closeOrTip();
         });
 
         btnNo.addEventListener('click', () => {
-            dismiss();
+            setCloseBehavior(remember.checked ? CLOSE_BEHAVIOR.STAY : CLOSE_BEHAVIOR.ASK);
+            markInteractiveDone();
             overlay.remove();
         });
 
@@ -882,6 +964,8 @@
         box.appendChild(title);
         box.appendChild(desc);
         box.appendChild(row);
+        box.appendChild(rememberRow);
+        box.appendChild(rememberHint);
         overlay.appendChild(box);
         document.body.appendChild(overlay);
     }
