@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         MineBBS 静默自动签到（新版首页组件）
 // @namespace    https://www.minebbs.com/
-// @version      2.1.6
-// @description  打开浏览器自动检查 MineBBS 签到时间，需要时静默签到；未登录弹窗可选去登录或跳过，登录成功后自动补签并询问是否关闭网页
+// @version      2.2.0
+// @description  每天自动检查 MineBBS 是否已签到，跨天未签到时静默签到；未登录弹窗可选去登录或跳过，登录成功后自动补签并可询问是否关闭网页
 // @author       you
 // @homepageURL  https://github.com/Zeiver1337/minebbs-auto-checkin
 // @supportURL   https://github.com/Zeiver1337/minebbs-auto-checkin/issues
@@ -30,13 +30,13 @@
  *
  * 工作方式
  * 1) 打开任意网页时读取本地「上次签到时间」；
- * 2) 若时间未知、跨天或超过 EXPIRE_HOURS 小时，后台静默打开 MineBBS 首页（不抢焦点）；
+ * 2) 若时间未知、或与上次签到不是同一天，后台静默打开 MineBBS 首页（不抢焦点）；
  * 3) 后台页识别 .mjc-signin-status：未签到就点击「立即签到」，让站点自身提交表单；
  * 4) 提交后页面会刷新，脚本用 sessionStorage 记住「本标签已提交」，刷新后只做结果确认，
  *    不会重复提交；确认已签到后写回时间并自动关闭后台标签；
  * 5) 会话内与提交后都有冷却保护，签到失败也不会反复弹标签；
  * 6) 未登录时不执行签到，会弹窗提醒；弹窗有「是/否」：
- *    是 = 切换到登录页；否 = 关闭标签并记录本次选择，20 小时后再尝试签到；
+ *    是 = 切换到登录页；否 = 关闭标签并记录本次选择，今天不再尝试，明天重新签到；
  * 7) 提醒后会持续检测登录状态（页面 data-logged-in + 后台请求首页双重确认），
  *    确认登录成功后自动打开补签页；补签完成会回到官网首页，并询问「是否关闭此网页」（是/否）。
  *
@@ -54,12 +54,6 @@
         SIGN_URL: 'https://www.minebbs.com/',
         // 登录页
         LOGIN_URL: 'https://www.minebbs.com/login/',
-        // 距离上次签到超过多少小时就判定为「长时间未更新」
-        EXPIRE_HOURS: 20,
-        // 用户在未登录弹窗选择「否」后，多少小时内不再尝试签到
-        SKIP_HOURS: 20,
-        // 是否同时按自然日判断（更贴合「每日签到」：昨天签的，今天就要重新签）
-        BY_NATURAL_DAY: true,
         // 同一浏览器会话内，两次「启动检查」的最小间隔（分钟），避免每开一页都检查
         CHECK_GAP_MIN: 5,
         // 判定需要签到后，两次「打开后台标签页」的最小间隔（分钟），避免签到失败时反复弹标签
@@ -158,6 +152,15 @@
         return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
     }
 
+    // 两个时间戳是否属于同一个自然日
+    function isSameDay(a, b) {
+        const x = new Date(a);
+        const y = new Date(b);
+        return x.getFullYear() === y.getFullYear() &&
+            x.getMonth() === y.getMonth() &&
+            x.getDate() === y.getDate();
+    }
+
     function log(msg) {
         const line = `[${fmtTime(Date.now())}] ${msg}`;
         try {
@@ -202,10 +205,11 @@
         return num(sessionGet(S.POSTED));
     }
 
-    // 用户是否在未登录弹窗里选择了「否」，并且在跳过有效期内
+    // 用户是否在未登录弹窗里选择了「否」，且这个选择发生在今天
     function isSkipped(now) {
+        now = now || Date.now();
         const t = num(G.get(K.LAST_SKIP, 0));
-        return t > 0 && ((now || Date.now()) - t) < CFG.SKIP_HOURS * 3600000;
+        return t > 0 && isSameDay(t, now);
     }
 
     // 记录「暂不登录」的选择
@@ -213,23 +217,15 @@
         const now = Date.now();
         G.set(K.LAST_SKIP, now);
         clearLoginPending();
-        log('用户选择暂不登录，已记录：' + fmtTime(now) + '，' + CFG.SKIP_HOURS + ' 小时后再尝试签到');
+        log('用户选择暂不登录，已记录：' + fmtTime(now) + '，今天不再尝试，明天重新签到');
     }
 
-    // 是否需要（重新）签到
+    // 是否需要（重新）签到：只看自然日，昨天签过、今天没签就要签
     function needSign(lastSign, now) {
         now = now || Date.now();
-        if (isSkipped(now)) return false; // 用户选择「否」，20 小时内不再尝试
+        if (isSkipped(now)) return false; // 用户今天选择「否」，当天不再尝试
         if (!lastSign) return true; // 时间未知
-        if (now - lastSign > CFG.EXPIRE_HOURS * 3600000) return true; // 长时间未更新
-        if (CFG.BY_NATURAL_DAY) {
-            const a = new Date(lastSign);
-            const b = new Date(now);
-            if (a.getFullYear() !== b.getFullYear() ||
-                a.getMonth() !== b.getMonth() ||
-                a.getDate() !== b.getDate()) return true; // 跨天了
-        }
-        return false;
+        return !isSameDay(lastSign, now); // 跨天了
     }
 
     function markSigned(extra) {
@@ -241,7 +237,7 @@
         G.notify('签到成功：' + fmtTime(now));
     }
 
-    // 未登录弹窗：是 = 去登录；否 = 关闭标签并跳过 20 小时
+    // 未登录弹窗：是 = 去登录；否 = 关闭标签，今天不再尝试
     // context = 'page'（当前页面） / 'auto'（脚本打开的后台签到标签）
     // 返回是否真的展示了弹窗（冷却期内返回 false）
     function warnNotLoggedIn(context) {
@@ -296,7 +292,7 @@
         desc.style.cssText = 'font-size:14px;color:#4b5563;margin-bottom:8px;';
 
         const hint = document.createElement('div');
-        hint.textContent = '选择「否」将关闭本页，并记录本次选择，' + CFG.SKIP_HOURS + ' 小时后再尝试签到。';
+        hint.textContent = '选择「否」将关闭本页，今天不再尝试签到，明天会自动重试。';
         hint.style.cssText = 'font-size:12px;color:#9ca3af;line-height:1.6;margin-bottom:18px;';
 
         const row = document.createElement('div');
@@ -524,14 +520,16 @@
             const logs = G.get(K.LOG, []);
             let status = '暂无记录';
             if (skip > last) {
-                const left = Math.max(0, CFG.SKIP_HOURS - (Date.now() - skip) / 3600000);
-                status = '上次未登录，选择了「否」→ 跳过（约 ' + left.toFixed(1) + ' 小时后重试）';
+                status = isSkipped()
+                    ? '上次未登录选择了「否」→ 今天不再尝试，明天重新签到'
+                    : '上次未登录选择了「否」，已跨天，将重新尝试签到';
             } else if (last) {
-                status = '上次已签到';
+                status = isSameDay(last, Date.now()) ? '今天已签到' : '上次已签到';
             }
             alert(
                 '上次签到：' + fmtTime(last) + '\n' +
                 (last ? '距今 ' + ((Date.now() - last) / 3600000).toFixed(1) + ' 小时' : '（无记录）') + '\n' +
+                '今日状态：' + (!last ? '无记录' : isSameDay(last, Date.now()) ? '今天已签到' : '今天还未签到') + '\n' +
                 '上次状态：' + status + '\n' +
                 '补签完成后：' + behaviorName(getCloseBehavior()) + '\n\n' +
                 '最近日志：\n' + (Array.isArray(logs) ? logs.slice(-10).join('\n') : '无')
@@ -616,19 +614,19 @@
 
         if (!expired) {
             log(isSkipped(now)
-                ? '用户已选择暂不登录，跳过期内不再检查'
-                : '签到时间正常（' + fmtTime(lastSign) + '），无需处理');
+                ? '今天已选择暂不登录，不再检查（明天重新尝试）'
+                : '今天已签到（' + fmtTime(lastSign) + '），无需处理');
             return;
         }
 
         const lastTry = num(G.get(K.LAST_TRY, 0));
         if (now - lastTry < CFG.OPEN_COOLDOWN_MIN * 60000) {
-            log('签到时间已过期，但仍在冷却期，跳过（上次尝试 ' + fmtTime(lastTry) + '）');
+            log('今天还未签到，但仍在冷却期，跳过（上次尝试 ' + fmtTime(lastTry) + '）');
             return;
         }
 
         G.set(K.LAST_TRY, now);
-        log(lastSign === 0 ? '签到时间未知，启动静默签到' : '签到时间已过期（' + fmtTime(lastSign) + '），启动静默签到');
+        log(lastSign === 0 ? '签到时间未知，启动静默签到' : '今天还未签到（上次 ' + fmtTime(lastSign) + '），启动静默签到');
         openSignTab(lastSign === 0 ? 'unknown' : 'expired');
     }
 
@@ -1014,11 +1012,11 @@
 
             const lastTry = num(G.get(K.LAST_TRY, 0));
             if (now - lastTry < CFG.OPEN_COOLDOWN_MIN * 60000) {
-                log('签到时间已过期，但仍在冷却期，跳过（上次尝试 ' + fmtTime(lastTry) + '）');
+                log('今天还未签到，但仍在冷却期，跳过（上次尝试 ' + fmtTime(lastTry) + '）');
                 return;
             }
             G.set(K.LAST_TRY, now);
-            log(lastSign === 0 ? '签到时间未知，启动静默签到' : '签到时间已过期（' + fmtTime(lastSign) + '），启动静默签到');
+            log(lastSign === 0 ? '签到时间未知，启动静默签到' : '今天还未签到（上次 ' + fmtTime(lastSign) + '），启动静默签到');
             openSignTab(lastSign === 0 ? 'unknown' : 'expired');
             return;
         }
@@ -1055,9 +1053,9 @@
 
             // 明确处于未登录状态就别白折腾，提醒用户登录
             if (isLoggedIn() === false) {
-                // 用户已经选择「否」：跳过期内直接收工，不再提醒
+                // 用户已经选择「否」：今天直接收工，不再提醒
                 if (isSkipped()) {
-                    stop('用户已选择暂不登录，跳过期内不再尝试');
+                    stop('今天已选择暂不登录，不再尝试（明天重新尝试）');
                     closeIfAuto();
                     return;
                 }
@@ -1092,7 +1090,7 @@
             if (state === 'signed') {
                 const lastSign = num(G.get(K.LAST_SIGN, 0));
                 if (needSign(lastSign)) markSigned('页面显示已签到');
-                else log('签到时间仍有效（' + fmtTime(lastSign) + '），无需重复记录');
+                else log('今天已签到（' + fmtTime(lastSign) + '），无需重复记录');
                 stop('已签到');
                 finishAfterSign();
                 return;
